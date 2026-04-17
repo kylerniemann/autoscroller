@@ -1,1165 +1,1394 @@
+const STORAGE_KEYS = ["speed", "autoStart", "voiceEnabled", "dockCollapsed", "onboardingSeen"];
+const DEFAULTS = {
+  speed: 6,
+  autoStart: false,
+  voiceEnabled: false,
+  dockCollapsed: false,
+  onboardingSeen: false
+};
 
-let scrolling = false;
-let interval;
-let floatingButton = null;
-let speedSlider = null;
-let autoStartButton = null;
-let voiceButton = null;
-let currentSpeed = 5;
-let autoStartEnabled = false;
-let voiceEnabled = false;
+const state = {
+  ...DEFAULTS,
+  scrolling: false,
+  isListening: false,
+  supportsVoice: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
+};
+
+let host = null;
+let shadow = null;
+let ui = {};
+let listenersBound = false;
+let scrollFrameId = 0;
+let lastFrameTime = 0;
+let stuckFrames = 0;
+let scrollTarget = null;
 let recognition = null;
-let isListening = false;
+let toastTimer = 0;
+let voiceRestartTimer = 0;
+let suppressVoiceRestart = false;
 
-// Inject CSS styles
-function injectStyles() {
-  // Check if styles already exist
-  if (document.getElementById('autoscroller-styles')) {
+bootstrap();
+
+function bootstrap() {
+  if (window.top !== window.self && !isPdfContext()) {
     return;
   }
-  
-  const style = document.createElement('style');
-  style.id = 'autoscroller-styles';
-  style.textContent = `
-    #autoscroller-container {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      z-index: 2147483647;
-      pointer-events: auto !important;
-      background: rgba(255, 255, 255, 0.85);
-      padding: 10px 6px;
-      border-radius: 24px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-      backdrop-filter: blur(12px);
-      border: 1px solid rgba(0, 0, 0, 0.08);
-      transition: all 0.3s ease;
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-container {
-        background: rgba(30, 30, 30, 0.9);
-        border-color: rgba(255, 255, 255, 0.1);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
+}
+
+async function init() {
+  const stored = await storageGet(STORAGE_KEYS);
+  Object.assign(state, DEFAULTS, stored);
+
+  ensureUi();
+  bindGlobalListeners();
+  render();
+
+  if (!state.onboardingSeen) {
+    showToast("AutoScroller is ready. Press Alt+S to start.", 5200);
+    state.onboardingSeen = true;
+    saveSettings({ onboardingSeen: true });
+  }
+
+  if (state.voiceEnabled) {
+    setVoiceEnabled(true, { force: true, skipPersist: true, announce: false });
+  }
+
+  if (state.autoStart) {
+    window.setTimeout(() => {
+      startScroll({ announce: false });
+    }, 250);
+  }
+}
+
+function ensureUi() {
+  if (host && document.contains(host)) {
+    return;
+  }
+
+  host = document.createElement("div");
+  host.id = "autoscroller-root";
+  host.style.position = "fixed";
+  host.style.right = "20px";
+  host.style.bottom = "20px";
+  host.style.zIndex = "2147483647";
+  host.style.pointerEvents = "none";
+
+  shadow = host.attachShadow({ mode: "open" });
+  shadow.innerHTML = `
+    <style>
+      :host {
+        color-scheme: light dark;
       }
-    }
-    #autoscroller-floating-btn {
-      width: 44px;
-      height: 44px;
-      background: #4285f4;
-      color: white;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      cursor: pointer;
-      user-select: none;
-      transition: all 0.2s ease;
-      flex-shrink: 0;
-      border: none;
-    }
-    #autoscroller-floating-btn:hover {
-      background: #3367d6;
-      transform: scale(1.08);
-      box-shadow: 0 2px 8px rgba(66, 133, 244, 0.4);
-    }
-    #autoscroller-floating-btn:active {
-      transform: scale(0.96);
-    }
-    #autoscroller-floating-btn.paused {
-      background: #34a853;
-    }
-    #autoscroller-floating-btn.paused:hover {
-      background: #2d8f47;
-      box-shadow: 0 2px 8px rgba(52, 168, 83, 0.4);
-    }
-    #autoscroller-auto-start-btn {
-      width: 44px;
-      height: 44px;
-      background: rgba(128, 128, 128, 0.2);
-      color: #666;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 16px;
-      cursor: pointer;
-      user-select: none;
-      transition: all 0.2s ease;
-      flex-shrink: 0;
-      border: 2px solid transparent;
-      position: relative;
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-auto-start-btn {
-        background: rgba(255, 255, 255, 0.1);
-        color: #aaa;
+
+      * {
+        box-sizing: border-box;
       }
-    }
-    #autoscroller-auto-start-btn:hover {
-      background: rgba(128, 128, 128, 0.3);
-      transform: scale(1.08);
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-auto-start-btn:hover {
-        background: rgba(255, 255, 255, 0.15);
+
+      .shell {
+        position: relative;
+        font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+        pointer-events: none;
       }
-    }
-    #autoscroller-auto-start-btn:active {
-      transform: scale(0.96);
-    }
-    #autoscroller-auto-start-btn.enabled {
-      background: #34a853;
-      color: white;
-      border-color: #2d8f47;
-    }
-    #autoscroller-auto-start-btn.enabled:hover {
-      background: #2d8f47;
-      box-shadow: 0 2px 8px rgba(52, 168, 83, 0.4);
-    }
-    #autoscroller-auto-start-icon {
-      width: 20px;
-      height: 20px;
-      stroke: currentColor;
-      fill: none;
-      stroke-width: 2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-    #autoscroller-voice-btn {
-      width: 44px;
-      height: 44px;
-      background: rgba(128, 128, 128, 0.2);
-      color: #666;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      cursor: pointer;
-      user-select: none;
-      transition: all 0.2s ease;
-      flex-shrink: 0;
-      border: 2px solid transparent;
-      position: relative;
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-voice-btn {
-        background: rgba(255, 255, 255, 0.1);
-        color: #aaa;
+
+      .panel,
+      .compact-bar {
+        pointer-events: auto;
       }
-    }
-    #autoscroller-voice-btn:hover {
-      background: rgba(128, 128, 128, 0.3);
-      transform: scale(1.08);
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-voice-btn:hover {
-        background: rgba(255, 255, 255, 0.15);
+
+      .panel {
+        width: min(320px, calc(100vw - 32px));
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+        border-radius: 20px;
+        border: 1px solid rgba(148, 163, 184, 0.32);
+        background: rgba(248, 250, 252, 0.96);
+        color: #0f172a;
+        box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
       }
-    }
-    #autoscroller-voice-btn:active {
-      transform: scale(0.96);
-    }
-    #autoscroller-voice-btn.enabled {
-      background: #ea4335;
-      color: white;
-      border-color: #d33b2c;
-    }
-    #autoscroller-voice-btn.enabled:hover {
-      background: #d33b2c;
-      box-shadow: 0 2px 8px rgba(234, 67, 53, 0.4);
-    }
-    #autoscroller-voice-btn.listening {
-      background: #ea4335;
-      color: white;
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-    @keyframes pulse {
-      0%, 100% {
-        box-shadow: 0 0 0 0 rgba(234, 67, 53, 0.7);
+
+      .panel.hidden,
+      .compact-bar.hidden {
+        display: none;
       }
-      50% {
-        box-shadow: 0 0 0 10px rgba(234, 67, 53, 0);
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 12px;
       }
-    }
-    #autoscroller-speed-slider {
-      width: 100px;
-      height: 4px;
-      border-radius: 2px;
-      background: rgba(0, 0, 0, 0.1);
-      outline: none;
-      -webkit-appearance: none;
-      appearance: none;
-      transform: rotate(-90deg);
-      margin: 50px 0;
-      cursor: pointer;
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-speed-slider {
-        background: rgba(255, 255, 255, 0.15);
+
+      .eyebrow {
+        margin: 0 0 6px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #64748b;
       }
-    }
-    #autoscroller-speed-slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #4285f4;
-      cursor: pointer;
-      transition: all 0.2s;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    }
-    #autoscroller-speed-slider::-webkit-slider-thumb:hover {
-      background: #3367d6;
-      transform: scale(1.2);
-      box-shadow: 0 2px 6px rgba(66, 133, 244, 0.4);
-    }
-    #autoscroller-speed-slider::-moz-range-thumb {
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #4285f4;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    }
-    #autoscroller-speed-slider::-moz-range-thumb:hover {
-      background: #3367d6;
-      transform: scale(1.2);
-      box-shadow: 0 2px 6px rgba(66, 133, 244, 0.4);
-    }
-    #autoscroller-speed-value {
-      font-size: 10px;
-      color: #666;
-      text-align: center;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      min-height: 14px;
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-speed-value {
-        color: #aaa;
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 0 10px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        font-size: 12px;
+        font-weight: 700;
       }
-    }
-    #autoscroller-tutorial {
-      position: fixed;
-      bottom: 200px;
-      right: 20px;
-      background: white;
-      padding: 20px;
-      border-radius: 12px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-      z-index: 10001;
-      max-width: 320px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      animation: slideIn 0.3s ease-out;
-    }
-    @keyframes slideIn {
-      from {
+
+      .status-badge[data-state="ready"] {
+        background: #e2e8f0;
+        border-color: #cbd5e1;
+        color: #334155;
+      }
+
+      .status-badge[data-state="scrolling"] {
+        background: #dbeafe;
+        border-color: #bfdbfe;
+        color: #1d4ed8;
+      }
+
+      .status-badge[data-state="listening"] {
+        background: #fef3c7;
+        border-color: #fcd34d;
+        color: #92400e;
+      }
+
+      .ghost-button,
+      .step-button,
+      .toggle-chip,
+      .compact-primary,
+      .compact-secondary,
+      .primary-button {
+        border: 0;
+        cursor: pointer;
+        transition:
+          transform 140ms ease,
+          background-color 140ms ease,
+          border-color 140ms ease,
+          box-shadow 140ms ease,
+          color 140ms ease;
+      }
+
+      .ghost-button:focus-visible,
+      .step-button:focus-visible,
+      .toggle-chip:focus-visible,
+      .compact-primary:focus-visible,
+      .compact-secondary:focus-visible,
+      .primary-button:focus-visible,
+      .slider:focus-visible {
+        outline: 2px solid #2563eb;
+        outline-offset: 2px;
+      }
+
+      .ghost-button {
+        min-height: 36px;
+        padding: 0 12px;
+        border-radius: 12px;
+        background: rgba(226, 232, 240, 0.9);
+        color: #334155;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .ghost-button:hover,
+      .ghost-button:active {
+        background: rgba(203, 213, 225, 0.95);
+      }
+
+      .primary-button {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 48px;
+        padding: 0 16px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+        color: #ffffff;
+        font-size: 15px;
+        font-weight: 700;
+        box-shadow: 0 12px 28px rgba(37, 99, 235, 0.22);
+      }
+
+      .primary-button:hover {
+        transform: translateY(-1px);
+      }
+
+      .primary-button.is-active {
+        background: linear-gradient(135deg, #b45309 0%, #d97706 100%);
+        box-shadow: 0 12px 28px rgba(217, 119, 6, 0.22);
+      }
+
+      .speed-card {
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.26);
+        background: rgba(255, 255, 255, 0.8);
+      }
+
+      .speed-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .speed-header label {
+        font-size: 13px;
+        font-weight: 700;
+        color: #334155;
+      }
+
+      .speed-header output {
+        font-size: 13px;
+        font-weight: 700;
+        color: #1d4ed8;
+      }
+
+      .stepper {
+        display: grid;
+        grid-template-columns: 40px 1fr 40px;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .step-button {
+        min-width: 40px;
+        min-height: 40px;
+        border-radius: 12px;
+        background: rgba(226, 232, 240, 0.92);
+        color: #0f172a;
+        font-size: 22px;
+        line-height: 1;
+      }
+
+      .step-button:hover {
+        transform: translateY(-1px);
+        background: rgba(203, 213, 225, 0.98);
+      }
+
+      .slider {
+        width: 100%;
+        height: 6px;
+        margin: 0;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(37, 99, 235, 0.18) 0%, rgba(37, 99, 235, 0.52) 100%);
+        appearance: none;
+      }
+
+      .slider::-webkit-slider-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 2px solid #ffffff;
+        background: #2563eb;
+        appearance: none;
+        box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
+      }
+
+      .slider::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+        background: #2563eb;
+        box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
+      }
+
+      .option-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .toggle-chip {
+        display: grid;
+        gap: 4px;
+        min-height: 74px;
+        padding: 12px;
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        background: rgba(255, 255, 255, 0.86);
+        text-align: left;
+        color: #0f172a;
+      }
+
+      .toggle-chip:hover {
+        transform: translateY(-1px);
+        border-color: rgba(96, 165, 250, 0.5);
+      }
+
+      .toggle-chip.is-on {
+        border-color: rgba(37, 99, 235, 0.4);
+        background: #eff6ff;
+        box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.16);
+      }
+
+      .toggle-chip:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+        transform: none;
+      }
+
+      .toggle-title {
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .toggle-meta {
+        font-size: 11px;
+        line-height: 1.45;
+        color: #64748b;
+      }
+
+      .footer-note {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.5;
+        color: #64748b;
+      }
+
+      .compact-bar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 10px;
+        border-radius: 18px;
+        background: rgba(15, 23, 42, 0.96);
+        box-shadow: 0 16px 32px rgba(15, 23, 42, 0.28);
+      }
+
+      .compact-primary,
+      .compact-secondary {
+        min-height: 40px;
+        padding: 0 14px;
+        border-radius: 12px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .compact-primary {
+        background: #2563eb;
+        color: #ffffff;
+      }
+
+      .compact-primary.is-active {
+        background: #d97706;
+      }
+
+      .compact-secondary {
+        background: rgba(226, 232, 240, 0.12);
+        color: #e2e8f0;
+      }
+
+      .toast {
+        position: absolute;
+        right: 0;
+        bottom: calc(100% + 12px);
+        max-width: 280px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.96);
+        color: #f8fafc;
+        font-size: 12px;
+        line-height: 1.45;
+        box-shadow: 0 14px 28px rgba(15, 23, 42, 0.24);
         opacity: 0;
-        transform: translateY(20px);
+        transform: translateY(8px);
+        transition: opacity 160ms ease, transform 160ms ease;
+        pointer-events: none;
       }
-      to {
+
+      .toast.visible {
         opacity: 1;
         transform: translateY(0);
       }
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-tutorial {
-        background: #2d2d2d;
-        color: #e0e0e0;
+
+      @media (prefers-color-scheme: dark) {
+        .panel {
+          border-color: rgba(71, 85, 105, 0.82);
+          background: rgba(15, 23, 42, 0.96);
+          color: #e2e8f0;
+          box-shadow: 0 20px 56px rgba(2, 6, 23, 0.42);
+        }
+
+        .eyebrow,
+        .toggle-meta,
+        .footer-note {
+          color: #94a3b8;
+        }
+
+        .status-badge[data-state="ready"] {
+          background: rgba(51, 65, 85, 0.88);
+          border-color: rgba(100, 116, 139, 0.72);
+          color: #e2e8f0;
+        }
+
+        .status-badge[data-state="scrolling"] {
+          background: rgba(29, 78, 216, 0.2);
+          border-color: rgba(96, 165, 250, 0.38);
+          color: #bfdbfe;
+        }
+
+        .status-badge[data-state="listening"] {
+          background: rgba(180, 83, 9, 0.24);
+          border-color: rgba(251, 191, 36, 0.42);
+          color: #fde68a;
+        }
+
+        .ghost-button,
+        .step-button {
+          background: rgba(51, 65, 85, 0.9);
+          color: #e2e8f0;
+        }
+
+        .ghost-button:hover,
+        .step-button:hover {
+          background: rgba(71, 85, 105, 0.94);
+        }
+
+        .speed-card,
+        .toggle-chip {
+          border-color: rgba(71, 85, 105, 0.72);
+          background: rgba(15, 23, 42, 0.84);
+          color: #e2e8f0;
+        }
+
+        .toggle-chip.is-on {
+          background: rgba(30, 64, 175, 0.3);
+          border-color: rgba(96, 165, 250, 0.4);
+        }
+
+        .speed-header label {
+          color: #cbd5e1;
+        }
+
+        .speed-header output {
+          color: #93c5fd;
+        }
       }
-    }
-    #autoscroller-tutorial h3 {
-      margin: 0 0 15px 0;
-      color: #333;
-      font-size: 20px;
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-tutorial h3 {
-        color: #e0e0e0;
+
+      @media (max-width: 640px) {
+        .panel {
+          width: min(300px, calc(100vw - 24px));
+          padding: 14px;
+          gap: 12px;
+        }
+
+        .option-grid {
+          grid-template-columns: 1fr;
+        }
       }
-    }
-    #autoscroller-tutorial p {
-      margin: 10px 0;
-      color: #666;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-tutorial p {
-        color: #bbb;
-      }
-    }
-    #autoscroller-tutorial ul {
-      margin: 10px 0;
-      padding-left: 20px;
-      color: #666;
-      font-size: 14px;
-    }
-    @media (prefers-color-scheme: dark) {
-      #autoscroller-tutorial ul {
-        color: #bbb;
-      }
-    }
-    #autoscroller-tutorial li {
-      margin: 8px 0;
-      line-height: 1.5;
-    }
-    #autoscroller-tutorial button {
-      margin-top: 15px;
-      padding: 10px 20px;
-      background: #4285f4;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      transition: background 0.2s;
-    }
-    #autoscroller-tutorial button:hover {
-      background: #3367d6;
-    }
+    </style>
+    <div class="shell">
+      <section id="panel" class="panel">
+        <div class="header">
+          <div>
+            <p class="eyebrow">AutoScroller</p>
+            <p id="statusBadge" class="status-badge" data-state="ready">Ready</p>
+          </div>
+          <button id="collapseButton" class="ghost-button" type="button" aria-label="Collapse controls">
+            Hide
+          </button>
+        </div>
+
+        <button id="toggleButton" class="primary-button" type="button">
+          Start scrolling
+        </button>
+
+        <div class="speed-card">
+          <div class="speed-header">
+            <label for="speedSlider">Speed</label>
+            <output id="speedValue" for="speedSlider">6/20</output>
+          </div>
+
+          <div class="stepper">
+            <button id="slowerButton" class="step-button" type="button" aria-label="Decrease speed">
+              -
+            </button>
+            <input id="speedSlider" class="slider" type="range" min="1" max="20" value="6" />
+            <button id="fasterButton" class="step-button" type="button" aria-label="Increase speed">
+              +
+            </button>
+          </div>
+        </div>
+
+        <div class="option-grid">
+          <button id="autoStartButton" class="toggle-chip" type="button" aria-pressed="false">
+            <span class="toggle-title">Auto-start</span>
+            <span class="toggle-meta">Begin on page load</span>
+          </button>
+
+          <button id="voiceButton" class="toggle-chip" type="button" aria-pressed="false">
+            <span class="toggle-title">Voice</span>
+            <span id="voiceMeta" class="toggle-meta">Start, pause, faster, slower</span>
+          </button>
+        </div>
+
+        <p id="footerNote" class="footer-note">
+          Shortcuts: Alt+S to start or pause, Alt+[ and Alt+] to adjust speed.
+        </p>
+      </section>
+
+      <div id="compactBar" class="compact-bar hidden">
+        <button id="compactToggle" class="compact-primary" type="button">Start</button>
+        <button id="expandButton" class="compact-secondary" type="button">Open</button>
+      </div>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </div>
   `;
-  document.head.appendChild(style);
+
+  (document.body || document.documentElement).appendChild(host);
+
+  ui = {
+    panel: shadow.getElementById("panel"),
+    statusBadge: shadow.getElementById("statusBadge"),
+    collapseButton: shadow.getElementById("collapseButton"),
+    toggleButton: shadow.getElementById("toggleButton"),
+    speedSlider: shadow.getElementById("speedSlider"),
+    speedValue: shadow.getElementById("speedValue"),
+    slowerButton: shadow.getElementById("slowerButton"),
+    fasterButton: shadow.getElementById("fasterButton"),
+    autoStartButton: shadow.getElementById("autoStartButton"),
+    voiceButton: shadow.getElementById("voiceButton"),
+    voiceMeta: shadow.getElementById("voiceMeta"),
+    footerNote: shadow.getElementById("footerNote"),
+    compactBar: shadow.getElementById("compactBar"),
+    compactToggle: shadow.getElementById("compactToggle"),
+    expandButton: shadow.getElementById("expandButton"),
+    toast: shadow.getElementById("toast")
+  };
+
+  bindUiListeners();
 }
 
-// Create floating controls (button + speed slider + auto-start toggle)
-function createFloatingControls() {
-  // Check if container already exists
-  if (document.getElementById('autoscroller-container')) {
-    floatingButton = document.getElementById('autoscroller-floating-btn');
-    speedSlider = document.getElementById('autoscroller-speed-slider');
-    autoStartButton = document.getElementById('autoscroller-auto-start-btn');
-    voiceButton = document.getElementById('autoscroller-voice-btn');
-    updateButtonState();
-    updateAutoStartButton();
-    updateVoiceButton();
+function bindUiListeners() {
+  ui.toggleButton.addEventListener("click", () => {
+    toggleScroll({ announce: true });
+  });
+
+  ui.compactToggle.addEventListener("click", () => {
+    toggleScroll({ announce: true });
+  });
+
+  ui.collapseButton.addEventListener("click", () => {
+    setDockCollapsed(true);
+  });
+
+  ui.expandButton.addEventListener("click", () => {
+    setDockCollapsed(false);
+  });
+
+  ui.slowerButton.addEventListener("click", () => {
+    updateSpeed(state.speed - 1, { announce: true });
+  });
+
+  ui.fasterButton.addEventListener("click", () => {
+    updateSpeed(state.speed + 1, { announce: true });
+  });
+
+  ui.speedSlider.addEventListener("input", (event) => {
+    updateSpeed(Number(event.target.value), { announce: false });
+  });
+
+  ui.speedSlider.addEventListener("change", () => {
+    showToast(`Speed set to ${state.speed}/20.`);
+  });
+
+  ui.autoStartButton.addEventListener("click", () => {
+    setAutoStart(!state.autoStart, { announce: true });
+  });
+
+  ui.voiceButton.addEventListener("click", () => {
+    setVoiceEnabled(!state.voiceEnabled, { announce: true });
+  });
+}
+
+function bindGlobalListeners() {
+  if (listenersBound) {
     return;
   }
-  
-  // Create container
-  const container = document.createElement('div');
-  container.id = 'autoscroller-container';
-  
-  // Create play/pause button
-  const button = document.createElement('div');
-  button.id = 'autoscroller-floating-btn';
-  button.innerHTML = scrolling ? '⏸' : '▶';
-  button.title = scrolling ? 'Pause scrolling' : 'Start scrolling';
-  
-  // Add click handler with better event handling
-  button.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    toggleScroll();
-  }, true); // Use capture phase for better reliability
-  
-  // Create speed slider (vertical - rotated via CSS)
-  const slider = document.createElement('input');
-  slider.id = 'autoscroller-speed-slider';
-  slider.type = 'range';
-  slider.min = '1';
-  slider.max = '20';
-  slider.value = currentSpeed;
-  slider.title = 'Scroll speed';
-  
-  // Create speed value display
-  const valueDisplay = document.createElement('span');
-  valueDisplay.id = 'autoscroller-speed-value';
-  valueDisplay.textContent = currentSpeed;
-  
-  // Slider change handler
-  slider.addEventListener('input', () => {
-    currentSpeed = parseInt(slider.value);
-    valueDisplay.textContent = currentSpeed;
-    chrome.storage.sync.set({ speed: currentSpeed });
-    
-    // Update scroll speed if currently scrolling
-    if (scrolling) {
-      stopScroll();
-      startScroll(currentSpeed);
+
+  listenersBound = true;
+
+  document.addEventListener("keydown", handleDocumentKeydown, true);
+  document.addEventListener("wheel", handleManualInterrupt, { passive: true, capture: true });
+  document.addEventListener("touchstart", handleManualInterrupt, { passive: true, capture: true });
+  window.addEventListener("beforeunload", cleanup, { once: true });
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    handleRuntimeMessage(message, sendResponse);
+    return true;
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "sync") {
+      return;
+    }
+
+    if (changes.speed && Number(changes.speed.newValue) !== state.speed) {
+      state.speed = clamp(Number(changes.speed.newValue) || DEFAULTS.speed, 1, 20);
+      render();
+    }
+
+    if (changes.autoStart && Boolean(changes.autoStart.newValue) !== state.autoStart) {
+      state.autoStart = Boolean(changes.autoStart.newValue);
+      render();
+    }
+
+    if (changes.dockCollapsed && Boolean(changes.dockCollapsed.newValue) !== state.dockCollapsed) {
+      state.dockCollapsed = Boolean(changes.dockCollapsed.newValue);
+      render();
+    }
+
+    if (changes.voiceEnabled && Boolean(changes.voiceEnabled.newValue) !== state.voiceEnabled) {
+      setVoiceEnabled(Boolean(changes.voiceEnabled.newValue), {
+        force: true,
+        skipPersist: true,
+        announce: false
+      });
     }
   });
-  
-  // Create auto-start toggle button
-  const autoStartBtn = document.createElement('div');
-  autoStartBtn.id = 'autoscroller-auto-start-btn';
-  const autoStartIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  autoStartIcon.id = 'autoscroller-auto-start-icon';
-  autoStartIcon.setAttribute('viewBox', '0 0 24 24');
-  autoStartIcon.setAttribute('width', '20');
-  autoStartIcon.setAttribute('height', '20');
-  autoStartIcon.innerHTML = '<path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>';
-  autoStartBtn.appendChild(autoStartIcon);
-  autoStartBtn.title = autoStartEnabled ? 'Auto-start enabled (click to disable)' : 'Auto-start disabled (click to enable)';
-  
-  // Add click handler for auto-start with better event handling
-  autoStartBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    autoStartEnabled = !autoStartEnabled;
-    chrome.storage.sync.set({ autoStart: autoStartEnabled });
-    updateAutoStartButton();
-  }, true); // Use capture phase for better reliability
-  
-  // Create voice control button
-  const voiceBtn = document.createElement('div');
-  voiceBtn.id = 'autoscroller-voice-btn';
-  voiceBtn.innerHTML = '🎤';
-  voiceBtn.title = voiceEnabled ? 'Voice control enabled (click to disable)' : 'Voice control disabled (click to enable)';
-  
-  // Add click handler for voice control
-  voiceBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    toggleVoiceControl();
-  }, true);
-  
-  // Assemble container (vertical layout)
-  container.appendChild(button);
-  container.appendChild(slider);
-  container.appendChild(valueDisplay);
-  container.appendChild(autoStartBtn);
-  container.appendChild(voiceBtn);
-  
-  // Append to body or PDF viewer - try multiple methods
-  let targetElement = null;
-  const isPDF = isPDFViewer();
-  
-  // For PDFs, try to find the viewer container
-  if (isPDF) {
-    // Try to find the main PDF viewer container
-    targetElement = document.querySelector('body') ||
-                   document.querySelector('#plugin') ||
-                   document.querySelector('embed') ||
-                   document.querySelector('#viewerContainer') ||
-                   document.documentElement;
+}
+
+function handleRuntimeMessage(message, sendResponse) {
+  switch (message?.action) {
+    case "getState":
+      sendResponse(buildStateSnapshot());
+      return;
+    case "toggle":
+      sendResponse(toggleScroll({ announce: false }));
+      return;
+    case "setSpeed":
+    case "speedChange":
+      updateSpeed(message.speed, { announce: false, skipPersist: true });
+      sendResponse(buildStateSnapshot());
+      return;
+    case "setAutoStart":
+    case "autoStartChange":
+      setAutoStart(message.enabled, { announce: false, skipPersist: true });
+      sendResponse(buildStateSnapshot());
+      return;
+    case "setVoiceEnabled":
+    case "voiceChange":
+      setVoiceEnabled(message.enabled, { force: true, announce: false, skipPersist: true });
+      sendResponse(buildStateSnapshot());
+      return;
+    default:
+      sendResponse(buildStateSnapshot());
+  }
+}
+
+function render() {
+  if (!ui.panel) {
+    return;
+  }
+
+  const status = getStatusPresentation();
+  ui.statusBadge.dataset.state = status.state;
+  ui.statusBadge.textContent = status.label;
+
+  ui.toggleButton.textContent = state.scrolling ? "Pause scrolling" : "Start scrolling";
+  ui.toggleButton.classList.toggle("is-active", state.scrolling);
+
+  ui.speedSlider.value = String(state.speed);
+  ui.speedValue.textContent = `${state.speed}/20`;
+
+  syncToggleButton(ui.autoStartButton, state.autoStart);
+  syncToggleButton(ui.voiceButton, state.voiceEnabled && state.supportsVoice);
+  ui.voiceButton.disabled = !state.supportsVoice;
+  ui.voiceButton.setAttribute("aria-disabled", String(!state.supportsVoice));
+
+  if (!state.supportsVoice) {
+    ui.voiceMeta.textContent = "Speech recognition is unavailable here";
+  } else if (state.isListening) {
+    ui.voiceMeta.textContent = "Listening for start, pause, faster, slower";
   } else {
-    // Regular pages
-    targetElement = document.body || document.documentElement;
+    ui.voiceMeta.textContent = "Start, pause, faster, slower";
   }
-  
-  // Last resort: try to append to document
-  if (!targetElement && document) {
-    targetElement = document.documentElement || document;
+
+  ui.footerNote.textContent = state.supportsVoice
+    ? "Shortcuts: Alt+S to start or pause, Alt+[ and Alt+] to adjust speed."
+    : "Shortcuts: Alt+S to start or pause, Alt+[ and Alt+] to adjust speed. Voice is unavailable on this page.";
+
+  ui.panel.classList.toggle("hidden", state.dockCollapsed);
+  ui.compactBar.classList.toggle("hidden", !state.dockCollapsed);
+  ui.compactToggle.textContent = state.scrolling ? "Pause" : "Start";
+  ui.compactToggle.classList.toggle("is-active", state.scrolling);
+}
+
+function syncToggleButton(button, enabled) {
+  button.classList.toggle("is-on", enabled);
+  button.setAttribute("aria-pressed", String(enabled));
+}
+
+function getStatusPresentation() {
+  if (state.scrolling) {
+    return { state: "scrolling", label: "Scrolling" };
   }
-  
-  if (targetElement) {
-    try {
-      targetElement.appendChild(container);
-      // For PDFs, ensure z-index is high enough and pointer events work
-      if (isPDF) {
-        container.style.zIndex = '2147483647'; // Maximum z-index
-        container.style.pointerEvents = 'auto';
-        // Make sure all child elements can receive clicks
-        const allChildren = container.querySelectorAll('*');
-        allChildren.forEach(child => {
-          child.style.pointerEvents = 'auto';
-        });
-      }
-    } catch (e) {
-      console.error('AutoScroller: Failed to append container', e);
-      // Try again after a short delay
-      setTimeout(() => {
-        if (targetElement && !document.getElementById('autoscroller-container')) {
-          try {
-            targetElement.appendChild(container);
-            if (isPDF) {
-              container.style.zIndex = '2147483647';
-              container.style.pointerEvents = 'auto';
-              const allChildren = container.querySelectorAll('*');
-              allChildren.forEach(child => {
-                child.style.pointerEvents = 'auto';
-              });
-            }
-          } catch (e2) {
-            console.error('AutoScroller: Retry failed', e2);
-          }
-        }
-      }, 100);
+
+  if (state.isListening) {
+    return { state: "listening", label: "Listening" };
+  }
+
+  return { state: "ready", label: "Ready" };
+}
+
+function setDockCollapsed(collapsed) {
+  state.dockCollapsed = Boolean(collapsed);
+  render();
+  saveSettings({ dockCollapsed: state.dockCollapsed });
+}
+
+function toggleScroll(options = {}) {
+  return state.scrolling
+    ? stopScroll({ announce: options.announce !== false, message: "Scrolling paused." })
+    : startScroll(options);
+}
+
+function startScroll(options = {}) {
+  const nextTarget = resolveScrollTarget();
+  if (!nextTarget) {
+    showToast("No scrollable area was detected on this page.");
+    return buildStateSnapshot();
+  }
+
+  scrollTarget = nextTarget;
+  state.scrolling = true;
+  lastFrameTime = 0;
+  stuckFrames = 0;
+
+  if (scrollFrameId) {
+    cancelAnimationFrame(scrollFrameId);
+  }
+
+  scrollFrameId = requestAnimationFrame(runScrollLoop);
+  render();
+
+  if (options.announce !== false) {
+    showToast("Scrolling started.");
+  }
+
+  return buildStateSnapshot();
+}
+
+function stopScroll(options = {}) {
+  if (scrollFrameId) {
+    cancelAnimationFrame(scrollFrameId);
+    scrollFrameId = 0;
+  }
+
+  state.scrolling = false;
+  lastFrameTime = 0;
+  stuckFrames = 0;
+  scrollTarget = null;
+  render();
+
+  if (options.announce !== false && options.message) {
+    showToast(options.message);
+  }
+
+  return buildStateSnapshot();
+}
+
+function runScrollLoop(timestamp) {
+  if (!state.scrolling) {
+    return;
+  }
+
+  if (!lastFrameTime) {
+    lastFrameTime = timestamp;
+    scrollFrameId = requestAnimationFrame(runScrollLoop);
+    return;
+  }
+
+  const deltaMs = Math.min(64, timestamp - lastFrameTime);
+  lastFrameTime = timestamp;
+
+  if (!isUsableScrollTarget(scrollTarget)) {
+    scrollTarget = resolveScrollTarget();
+  }
+
+  if (!scrollTarget) {
+    stopScroll({ announce: true, message: "No scrollable area was detected on this page." });
+    return;
+  }
+
+  const before = readScrollPosition(scrollTarget);
+  applyScrollStep(scrollTarget, speedToPixelsPerSecond(state.speed) * (deltaMs / 1000));
+  const after = readScrollPosition(scrollTarget);
+
+  if (Math.abs(after - before) < 0.5) {
+    const nextTarget = resolveScrollTarget();
+    if (nextTarget && nextTarget !== scrollTarget) {
+      scrollTarget = nextTarget;
+    }
+
+    stuckFrames += 1;
+  } else {
+    stuckFrames = 0;
+  }
+
+  if (stuckFrames >= 18) {
+    stopScroll({ announce: true, message: "Reached the end of this view." });
+    return;
+  }
+
+  scrollFrameId = requestAnimationFrame(runScrollLoop);
+}
+
+function resolveScrollTarget() {
+  const candidates = [];
+  const activeScrollable = getScrollableAncestor(document.activeElement);
+  if (activeScrollable) {
+    candidates.push(activeScrollable);
+  }
+
+  if (isPdfContext()) {
+    candidates.push(
+      document.querySelector("#viewerContainer"),
+      document.querySelector(".pdfViewer"),
+      document.querySelector("#scroller"),
+      document.querySelector("#plugin"),
+      document.querySelector('embed[type="application/pdf"]'),
+      document.querySelector('embed[type="application/x-google-chrome-pdf"]'),
+      document.querySelector("embed")
+    );
+  }
+
+  candidates.push(document.scrollingElement, document.documentElement, document.body);
+
+  const selectorCandidates = [
+    "#viewerContainer",
+    ".pdfViewer",
+    "[data-testid*='scroll']",
+    "[class*='scroll']",
+    "[class*='overflow']",
+    "main",
+    "[role='main']",
+    "article",
+    "section"
+  ];
+
+  for (const selector of selectorCandidates) {
+    const nodes = document.querySelectorAll(selector);
+    const limit = Math.min(nodes.length, 20);
+    for (let index = 0; index < limit; index += 1) {
+      candidates.push(nodes[index]);
     }
   }
-  
-  floatingButton = button;
-  speedSlider = slider;
-  autoStartButton = autoStartBtn;
-  voiceButton = voiceBtn;
-  updateButtonState();
-  updateAutoStartButton();
-  updateVoiceButton();
+
+  const uniqueCandidates = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+
+    seen.add(candidate);
+    uniqueCandidates.push(candidate);
+  }
+
+  return (
+    uniqueCandidates
+      .filter(isUsableScrollTarget)
+      .sort((left, right) => scoreScrollTarget(right) - scoreScrollTarget(left))[0] || null
+  );
 }
 
-// Update auto-start button appearance
-function updateAutoStartButton() {
-  if (autoStartButton) {
-    autoStartButton.classList.toggle('enabled', autoStartEnabled);
-    autoStartButton.title = autoStartEnabled ? 'Auto-start enabled (click to disable)' : 'Auto-start disabled (click to enable)';
+function isUsableScrollTarget(element) {
+  if (!element) {
+    return false;
+  }
+
+  if (host === element || (shadow && shadow.contains(element))) {
+    return false;
+  }
+
+  if (isDocumentTarget(element)) {
+    return getScrollRange(element) > 40;
+  }
+
+  if (!(element instanceof Element)) {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  if (rect.width < 40 || rect.height < 80) {
+    return false;
+  }
+
+  if (rect.bottom < -40 || rect.top > window.innerHeight + 40) {
+    return false;
+  }
+
+  const style = window.getComputedStyle(element);
+  const overflowY = style.overflowY;
+  const className = typeof element.className === "string" ? element.className.toLowerCase() : "";
+  const looksScrollable =
+    overflowY === "auto" ||
+    overflowY === "scroll" ||
+    overflowY === "overlay" ||
+    className.includes("scroll") ||
+    className.includes("overflow");
+
+  return looksScrollable && getScrollRange(element) > 60;
+}
+
+function scoreScrollTarget(element) {
+  const range = getScrollRange(element);
+  const visibleHeight = isDocumentTarget(element)
+    ? window.innerHeight
+    : Math.min(element.clientHeight || 0, window.innerHeight);
+  const documentBonus = isDocumentTarget(element) ? 220 : 0;
+  const activeBonus = element?.contains?.(document.activeElement) ? 80 : 0;
+  const pdfBonus = isPdfContext() ? 60 : 0;
+
+  return range + visibleHeight + documentBonus + activeBonus + pdfBonus;
+}
+
+function getScrollableAncestor(node) {
+  let current = node;
+  while (current && current !== document.body && current !== document.documentElement) {
+    if (isUsableScrollTarget(current)) {
+      return current;
+    }
+
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function getScrollRange(element) {
+  if (!element) {
+    return 0;
+  }
+
+  if (isDocumentTarget(element)) {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    if (!scrollingElement) {
+      return 0;
+    }
+
+    return Math.max(0, scrollingElement.scrollHeight - window.innerHeight);
+  }
+
+  return Math.max(0, (element.scrollHeight || 0) - (element.clientHeight || 0));
+}
+
+function readScrollPosition(element) {
+  if (isDocumentTarget(element)) {
+    const root = document.scrollingElement || document.documentElement || document.body;
+    return Math.max(window.scrollY || 0, root?.scrollTop || 0);
+  }
+
+  return element.scrollTop || 0;
+}
+
+function applyScrollStep(element, amount) {
+  if (!element || amount <= 0) {
+    return;
+  }
+
+  if (isPdfContext()) {
+    dispatchSyntheticWheel(element, amount);
+  }
+
+  if (isDocumentTarget(element)) {
+    const before = readScrollPosition(element);
+
+    if (typeof window.scrollBy === "function") {
+      window.scrollBy({ top: amount, left: 0, behavior: "auto" });
+    }
+
+    const after = readScrollPosition(element);
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    if (scrollingElement && Math.abs(after - before) < 0.5) {
+      scrollingElement.scrollTop += amount;
+    }
+
+    return;
+  }
+
+  if (typeof element.scrollBy === "function") {
+    element.scrollBy({ top: amount, left: 0, behavior: "auto" });
+    return;
+  }
+
+  if ("scrollTop" in element) {
+    element.scrollTop += amount;
   }
 }
 
-// Initialize voice recognition
-function initVoiceRecognition() {
-  // Check if browser supports speech recognition
+function dispatchSyntheticWheel(element, amount) {
+  try {
+    const wheelEvent = new WheelEvent("wheel", {
+      deltaY: amount,
+      bubbles: true,
+      cancelable: true,
+      view: window
+    });
+
+    element.dispatchEvent(wheelEvent);
+  } catch (error) {
+    // Ignore PDF viewer wheel dispatch failures.
+  }
+}
+
+function speedToPixelsPerSecond(speed) {
+  return 60 + clamp(Number(speed) || DEFAULTS.speed, 1, 20) * 36;
+}
+
+function updateSpeed(nextSpeed, options = {}) {
+  const clampedSpeed = clamp(Number(nextSpeed) || DEFAULTS.speed, 1, 20);
+  const changed = clampedSpeed !== state.speed;
+
+  state.speed = clampedSpeed;
+  render();
+
+  if (!options.skipPersist) {
+    saveSettings({ speed: state.speed });
+  }
+
+  if (options.announce && changed) {
+    showToast(`Speed set to ${state.speed}/20.`);
+  }
+
+  return buildStateSnapshot();
+}
+
+function setAutoStart(enabled, options = {}) {
+  const nextValue = Boolean(enabled);
+  const changed = nextValue !== state.autoStart;
+  state.autoStart = nextValue;
+  render();
+
+  if (!options.skipPersist) {
+    saveSettings({ autoStart: state.autoStart });
+  }
+
+  if (options.announce && changed) {
+    showToast(state.autoStart ? "Auto-start enabled." : "Auto-start disabled.");
+  }
+
+  return buildStateSnapshot();
+}
+
+function setVoiceEnabled(enabled, options = {}) {
+  const nextValue = Boolean(enabled);
+
+  if (nextValue && !state.supportsVoice) {
+    state.voiceEnabled = false;
+    render();
+
+    if (!options.skipPersist) {
+      saveSettings({ voiceEnabled: false });
+    }
+
+    if (options.announce !== false) {
+      showToast("Voice control is not supported on this page.");
+    }
+
+    return buildStateSnapshot();
+  }
+
+  const changed = nextValue !== state.voiceEnabled;
+  state.voiceEnabled = nextValue;
+  render();
+
+  if (!options.skipPersist) {
+    saveSettings({ voiceEnabled: state.voiceEnabled });
+  }
+
+  if (!changed && !options.force) {
+    return buildStateSnapshot();
+  }
+
+  if (state.voiceEnabled) {
+    startVoiceRecognition();
+  } else {
+    stopVoiceRecognition();
+  }
+
+  if (options.announce && changed) {
+    showToast(state.voiceEnabled ? "Voice control enabled." : "Voice control disabled.");
+  }
+
+  return buildStateSnapshot();
+}
+
+function startVoiceRecognition() {
+  if (!state.supportsVoice) {
+    return;
+  }
+
+  if (!recognition) {
+    recognition = createRecognition();
+  }
+
+  if (!recognition || state.isListening) {
+    render();
+    return;
+  }
+
+  suppressVoiceRestart = false;
+  window.clearTimeout(voiceRestartTimer);
+
+  try {
+    recognition.start();
+    state.isListening = true;
+    render();
+  } catch (error) {
+    if (!String(error?.message || error).toLowerCase().includes("already")) {
+      disableVoiceControl("Voice control could not start. Check microphone access.");
+    }
+  }
+}
+
+function stopVoiceRecognition() {
+  suppressVoiceRestart = true;
+  window.clearTimeout(voiceRestartTimer);
+
+  if (recognition && state.isListening) {
+    try {
+      recognition.stop();
+    } catch (error) {
+      // Ignore stop failures when the recognizer is already idle.
+    }
+  }
+
+  state.isListening = false;
+  render();
+}
+
+function createRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    console.warn('AutoScroller: Speech recognition not supported in this browser');
     return null;
   }
-  
-  recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.lang = 'en-US';
-  
-  recognition.onresult = (event) => {
-    const lastResult = event.results[event.results.length - 1];
-    const transcript = lastResult[0].transcript.toLowerCase().trim();
-    
-    console.log('AutoScroller: Voice command detected:', transcript);
-    
-    // Handle voice commands
-    if (transcript.includes('scroll') || transcript.includes('start')) {
-      if (!scrolling) {
-        startScroll(currentSpeed);
-      }
-    } else if (transcript.includes('pause') || transcript.includes('stop')) {
-      if (scrolling) {
-        stopScroll();
-      }
-    } else if (transcript.includes('speed up') || transcript.includes('faster')) {
-      if (currentSpeed < 20) {
-        currentSpeed = Math.min(20, currentSpeed + 2);
-        if (speedSlider) {
-          speedSlider.value = currentSpeed;
-          const valueDisplay = document.getElementById('autoscroller-speed-value');
-          if (valueDisplay) {
-            valueDisplay.textContent = currentSpeed;
-          }
-        }
-        chrome.storage.sync.set({ speed: currentSpeed });
-        if (scrolling) {
-          stopScroll();
-          startScroll(currentSpeed);
-        }
-      }
-    } else if (transcript.includes('slow down') || transcript.includes('slower')) {
-      if (currentSpeed > 1) {
-        currentSpeed = Math.max(1, currentSpeed - 2);
-        if (speedSlider) {
-          speedSlider.value = currentSpeed;
-          const valueDisplay = document.getElementById('autoscroller-speed-value');
-          if (valueDisplay) {
-            valueDisplay.textContent = currentSpeed;
-          }
-        }
-        chrome.storage.sync.set({ speed: currentSpeed });
-        if (scrolling) {
-          stopScroll();
-          startScroll(currentSpeed);
-        }
-      }
-    }
-  };
-  
-  recognition.onerror = (event) => {
-    console.error('AutoScroller: Speech recognition error:', event.error);
-    if (event.error === 'no-speech' || event.error === 'audio-capture') {
-      // These are common and can be ignored
+
+  const instance = new SpeechRecognition();
+  instance.continuous = true;
+  instance.interimResults = false;
+  instance.lang = "en-US";
+
+  instance.onresult = (event) => {
+    const result = event.results[event.results.length - 1];
+    const transcript = result[0].transcript.toLowerCase().trim();
+
+    if (transcript.includes("pause") || transcript.includes("stop")) {
+      stopScroll({ announce: true, message: "Paused by voice command." });
       return;
     }
-    // Stop listening on other errors
-    if (isListening) {
-      try {
-        recognition.stop();
-      } catch (e) {
-        // Ignore stop errors
-      }
-      isListening = false;
-      updateVoiceButton();
+
+    if (transcript.includes("faster") || transcript.includes("speed up")) {
+      updateSpeed(state.speed + 1, { announce: true });
+      return;
+    }
+
+    if (transcript.includes("slower") || transcript.includes("slow down")) {
+      updateSpeed(state.speed - 1, { announce: true });
+      return;
+    }
+
+    if (transcript.includes("scroll") || transcript.includes("start")) {
+      startScroll({ announce: true });
     }
   };
-  
-  recognition.onend = () => {
-    // Restart recognition if voice is still enabled
-    if (voiceEnabled && !isListening) {
-      try {
-        recognition.start();
-        isListening = true;
-        updateVoiceButton();
-      } catch (e) {
-        console.error('AutoScroller: Failed to restart voice recognition:', e);
-        voiceEnabled = false;
-        updateVoiceButton();
-      }
-    } else {
-      isListening = false;
-      updateVoiceButton();
+
+  instance.onerror = (event) => {
+    if (event.error === "no-speech") {
+      return;
     }
+
+    if (
+      event.error === "audio-capture" ||
+      event.error === "not-allowed" ||
+      event.error === "service-not-allowed"
+    ) {
+      disableVoiceControl("Voice control needs microphone permission in Chrome.");
+      return;
+    }
+
+    state.isListening = false;
+    render();
   };
-  
-  return recognition;
-}
 
-// Toggle voice control
-function toggleVoiceControl() {
-  voiceEnabled = !voiceEnabled;
-  chrome.storage.sync.set({ voiceEnabled: voiceEnabled });
-  updateVoiceButton();
-  
-  if (voiceEnabled) {
-    if (!recognition) {
-      recognition = initVoiceRecognition();
+  instance.onend = () => {
+    state.isListening = false;
+    render();
+
+    if (!state.voiceEnabled || suppressVoiceRestart) {
+      return;
     }
-    if (recognition) {
+
+    voiceRestartTimer = window.setTimeout(() => {
       try {
         recognition.start();
-        isListening = true;
-        updateVoiceButton();
-      } catch (e) {
-        console.error('AutoScroller: Failed to start voice recognition:', e);
-        voiceEnabled = false;
-        updateVoiceButton();
-        alert('Voice recognition failed to start. Please check your microphone permissions.');
+        state.isListening = true;
+        render();
+      } catch (error) {
+        disableVoiceControl("Voice control could not restart. Check microphone access.");
       }
-    } else {
-      voiceEnabled = false;
-      updateVoiceButton();
-      alert('Voice recognition is not supported in this browser.');
-    }
-  } else {
-    if (recognition && isListening) {
-      try {
-        recognition.stop();
-        isListening = false;
-        updateVoiceButton();
-      } catch (e) {
-        console.error('AutoScroller: Failed to stop voice recognition:', e);
-      }
-    }
-  }
+    }, 500);
+  };
+
+  return instance;
 }
 
-// Update voice button appearance
-function updateVoiceButton() {
-  if (voiceButton) {
-    voiceButton.classList.toggle('enabled', voiceEnabled);
-    voiceButton.classList.toggle('listening', isListening);
-    if (isListening) {
-      voiceButton.title = 'Voice control listening... Say "scroll", "pause", "speed up", or "slow down"';
-    } else if (voiceEnabled) {
-      voiceButton.title = 'Voice control enabled (click to disable)';
-    } else {
-      voiceButton.title = 'Voice control disabled (click to enable)';
-    }
-  }
+function disableVoiceControl(message) {
+  state.voiceEnabled = false;
+  state.isListening = false;
+  suppressVoiceRestart = true;
+  render();
+  saveSettings({ voiceEnabled: false });
+  showToast(message);
 }
 
-// Update button appearance based on scroll state
-function updateButtonState() {
-  if (floatingButton) {
-    floatingButton.innerHTML = scrolling ? '⏸' : '▶';
-    floatingButton.title = scrolling ? 'Pause scrolling' : 'Start scrolling';
-    floatingButton.classList.toggle('paused', !scrolling);
-  }
-}
-
-// Toggle scroll function
-function toggleScroll() {
-  if (scrolling) {
-    stopScroll();
-  } else {
-    startScroll(currentSpeed);
-  }
-}
-
-// Show tutorial popup
-function showTutorial() {
-  // Check if tutorial already exists
-  if (document.getElementById('autoscroller-tutorial')) {
+function handleDocumentKeydown(event) {
+  if (!event.isTrusted) {
     return;
   }
-  
-  // Wait a bit to ensure controls are visible
-  setTimeout(() => {
-    const tutorial = document.createElement('div');
-    tutorial.id = 'autoscroller-tutorial';
-    tutorial.innerHTML = `
-      <h3>Welcome to AutoScroller! 🎉</h3>
-      <p>Here's how to use the floating controls:</p>
-      <ul>
-        <li><strong>▶/⏸ Button</strong> - Start or pause scrolling</li>
-        <li><strong>Vertical Slider</strong> - Adjust scroll speed (1-20)</li>
-        <li><strong>Auto Button</strong> - Toggle auto-start on new pages</li>
-        <li><strong>🎤 Button</strong> - Voice control: Say "scroll", "pause", "speed up", or "slow down"</li>
-      </ul>
-      <p style="margin-bottom: 0;">Controls are in the bottom-right corner ↓</p>
-      <button id="autoscroller-tutorial-close">Got it!</button>
-    `;
-    
-    const closeBtn = tutorial.querySelector('#autoscroller-tutorial-close');
-    closeBtn.addEventListener('click', () => {
-      tutorial.remove();
-      chrome.storage.sync.set({ tutorialShown: true });
-    });
-    
-    // Append to body or documentElement
-    const target = document.body || document.documentElement;
-    if (target) {
-      target.appendChild(tutorial);
-      
-      // Auto-close after 10 seconds
-      setTimeout(() => {
-        if (tutorial.parentNode) {
-          tutorial.remove();
-          chrome.storage.sync.set({ tutorialShown: true });
-        }
-      }, 10000);
-    }
-  }, 800);
-}
 
-// Check if we're in a PDF viewer
-function isPDFViewer() {
-  // Check URL
-  if (window.location.href.includes('.pdf') || 
-      window.location.href.startsWith('chrome-extension://') ||
-      window.location.href.startsWith('chrome://')) {
-    // Check for PDF viewer elements
-    if (document.querySelector('embed[type="application/pdf"]') ||
-        document.querySelector('embed[type="application/x-google-chrome-pdf"]') ||
-        document.querySelector('#plugin') ||
-        document.querySelector('embed') ||
-        document.querySelector('iframe[src*=".pdf"]')) {
-      return true;
+  if (eventTargetsDock(event) || isEditableTarget(event.target)) {
+    return;
+  }
+
+  if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+    if (event.code === "KeyS") {
+      event.preventDefault();
+      toggleScroll({ announce: true });
+      return;
     }
-    // Chrome's PDF viewer might not have these elements immediately
-    // Check if we're in the PDF viewer by looking at the document structure
-    if (document.body && document.body.classList.contains('pdf-viewer')) {
-      return true;
+
+    if (event.code === "BracketLeft") {
+      event.preventDefault();
+      updateSpeed(state.speed - 1, { announce: true });
+      return;
     }
-    // Check for PDF.js viewer (used by some browsers)
-    if (document.querySelector('#viewer') || 
-        document.querySelector('.pdfViewer') ||
-        window.PDFViewerApplication) {
-      return true;
+
+    if (event.code === "BracketRight") {
+      event.preventDefault();
+      updateSpeed(state.speed + 1, { announce: true });
     }
   }
-  return false;
+
+  if (state.scrolling && isNavigationKey(event.code)) {
+    stopScroll({ announce: true, message: "Paused after manual input." });
+  }
 }
 
-// Initialize on page load
-function init() {
-  let retryCount = 0;
-  const maxRetries = 50; // 5 seconds max wait
-  
-  // More robust initialization that works on various sites
-  const tryInit = () => {
-    retryCount++;
-    
-    // Check if we can access the document
-    if (typeof document === 'undefined') {
-      if (retryCount < maxRetries) {
-        setTimeout(tryInit, 100);
-      }
-      return;
-    }
-    
-    // For PDFs, check if we're in the viewer frame
-    const pdfViewer = isPDFViewer();
-    
-    // Try multiple methods to find a target element
-    let targetElement = null;
-    
-    // Method 1: Try document.body
-    if (document.body) {
-      targetElement = document.body;
-    }
-    // Method 2: Try document.documentElement
-    else if (document.documentElement) {
-      targetElement = document.documentElement;
-    }
-    // Method 3: For PDF viewer, try plugin element
-    else if (pdfViewer) {
-      targetElement = document.querySelector('#plugin') || 
-                     document.querySelector('embed') ||
-                     document.documentElement;
-    }
-    // Method 4: Wait for body to appear (for dynamic sites like OpenAI)
-    else if (document.readyState === 'loading') {
-      if (retryCount < maxRetries) {
-        document.addEventListener('DOMContentLoaded', tryInit);
-        setTimeout(tryInit, 100);
-      }
-      return;
-    }
-    
-    // If we have a target or can inject styles, proceed
-    if (targetElement || document.head || document.documentElement) {
-      try {
-        injectStyles();
-        chrome.storage.sync.get(["speed", "autoStart", "voiceEnabled", "tutorialShown"], data => {
-          currentSpeed = data.speed || 5;
-          autoStartEnabled = data.autoStart || false;
-          voiceEnabled = data.voiceEnabled || false;
-          
-          // Show tutorial on first use (skip for PDFs)
-          if (!data.tutorialShown && !pdfViewer) {
-            showTutorial();
-          }
-          
-          // Create controls - this will handle finding the right target
-          createFloatingControls();
-          
-          // Initialize voice recognition if enabled
-          if (voiceEnabled) {
-            recognition = initVoiceRecognition();
-            if (recognition) {
-              try {
-                recognition.start();
-                isListening = true;
-                updateVoiceButton();
-              } catch (e) {
-                console.error('AutoScroller: Failed to start voice recognition:', e);
-                voiceEnabled = false;
-                updateVoiceButton();
-              }
-            }
-          }
-          
-          if (autoStartEnabled) {
-            // Small delay for PDFs to ensure viewer is ready
-            setTimeout(() => {
-              startScroll(currentSpeed);
-            }, pdfViewer ? 300 : 0);
-          }
-        });
-      } catch (e) {
-        console.error('AutoScroller init error:', e);
-        // Retry after a delay
-        if (retryCount < maxRetries) {
-          setTimeout(tryInit, 200);
-        }
-      }
-    } else {
-      // Wait a bit more and retry (for dynamic sites)
-      if (retryCount < maxRetries) {
-        setTimeout(tryInit, 100);
-      }
-    }
+function handleManualInterrupt(event) {
+  if (!state.scrolling || !event.isTrusted || eventTargetsDock(event)) {
+    return;
+  }
+
+  stopScroll({ announce: true, message: "Paused after manual input." });
+}
+
+function eventTargetsDock(event) {
+  return event.composedPath?.().includes(host) || false;
+}
+
+function isEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(
+    target.isContentEditable ||
+      target.closest("input, textarea, select, [contenteditable=''], [contenteditable='true']")
+  );
+}
+
+function isNavigationKey(code) {
+  return [
+    "ArrowDown",
+    "ArrowUp",
+    "PageDown",
+    "PageUp",
+    "Space",
+    "Home",
+    "End"
+  ].includes(code);
+}
+
+function buildStateSnapshot() {
+  return {
+    connected: true,
+    scrolling: state.scrolling,
+    speed: state.speed,
+    autoStart: state.autoStart,
+    voiceEnabled: state.voiceEnabled,
+    supportsVoice: state.supportsVoice,
+    dockCollapsed: state.dockCollapsed,
+    pageTitle: document.title || ""
   };
-  
-  // Start initialization
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    tryInit();
-  } else {
-    window.addEventListener('load', tryInit);
-    // Also try immediately in case load already fired
-    setTimeout(tryInit, 0);
-  }
-  
-  // Additional retry for slow-loading sites (like OpenAI)
-  setTimeout(() => {
-    if (!document.getElementById('autoscroller-container')) {
-      tryInit();
-    }
-  }, 1000);
 }
 
-// Debug: Log frame info for PDFs
-if (window.location.href.includes('.pdf') || window.location.href.startsWith('chrome-extension://')) {
-  console.log('AutoScroller: Running in frame', {
-    url: window.location.href,
-    hasBody: !!document.body,
-    hasDocumentElement: !!document.documentElement,
-    isPDF: isPDFViewer()
+function showToast(message, duration = 2600) {
+  if (!ui.toast || !message) {
+    return;
+  }
+
+  ui.toast.textContent = message;
+  ui.toast.classList.add("visible");
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    ui.toast.classList.remove("visible");
+  }, duration);
+}
+
+function cleanup() {
+  stopScroll({ announce: false });
+  stopVoiceRecognition();
+}
+
+function storageGet(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(keys, resolve);
   });
 }
 
-init();
-
-// Listen for messages from popup
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "toggle") {
-    toggleScroll();
-  } else if (msg.action === "speedChange") {
-    if (speedSlider) {
-      speedSlider.value = msg.speed;
-      currentSpeed = msg.speed;
-      const valueDisplay = document.getElementById('autoscroller-speed-value');
-      if (valueDisplay) {
-        valueDisplay.textContent = msg.speed;
-      }
-      if (scrolling) {
-        stopScroll();
-        startScroll(currentSpeed);
-      }
-    }
-  } else if (msg.action === "autoStartChange") {
-    autoStartEnabled = msg.enabled;
-    updateAutoStartButton();
-  } else if (msg.action === "voiceChange") {
-    voiceEnabled = msg.enabled;
-    if (voiceEnabled) {
-      if (!recognition) {
-        recognition = initVoiceRecognition();
-      }
-      if (recognition) {
-        try {
-          recognition.start();
-          isListening = true;
-          updateVoiceButton();
-        } catch (e) {
-          console.error('AutoScroller: Failed to start voice recognition:', e);
-          voiceEnabled = false;
-          updateVoiceButton();
-        }
-      }
-    } else {
-      if (recognition && isListening) {
-        try {
-          recognition.stop();
-          isListening = false;
-          updateVoiceButton();
-        } catch (e) {
-          console.error('AutoScroller: Failed to stop voice recognition:', e);
-        }
-      }
-    }
-    updateVoiceButton();
-  }
-});
-
-function startScroll(speed) {
-  scrolling = true;
-  const scrollAmount = parseInt(speed);
-  const isPDF = isPDFViewer();
-  
-  // For PDFs, use multiple methods to scroll
-  if (isPDF) {
-    // Find the PDF embed element
-    const pdfEmbed = document.querySelector('embed[type="application/pdf"]') ||
-                     document.querySelector('embed[type="application/x-google-chrome-pdf"]') ||
-                     document.querySelector('embed') ||
-                     document.querySelector('#plugin');
-    
-    // Try to focus the PDF viewer first (one-time setup)
-    if (pdfEmbed) {
-      try {
-        pdfEmbed.focus();
-        // Also try clicking on it to ensure it has focus
-        pdfEmbed.click();
-      } catch (e) {
-        // Focus/click might fail due to security restrictions
-      }
-    }
-    
-    // Use a faster interval for PDFs to make scrolling smoother
-    const pdfInterval = 30; // 30ms instead of 50ms for smoother PDF scrolling
-    
-    interval = setInterval(() => {
-      try {
-        // Method 1: Simulate mouse wheel events (most reliable for Chrome PDF viewer)
-        const wheelEvent = new WheelEvent('wheel', {
-          deltaY: scrollAmount,
-          deltaMode: 0, // Pixels
-          bubbles: true,
-          cancelable: true,
-          view: window
-        });
-        
-        // Dispatch wheel events to multiple targets
-        if (pdfEmbed) {
-          pdfEmbed.dispatchEvent(wheelEvent);
-        }
-        window.dispatchEvent(wheelEvent);
-        document.dispatchEvent(wheelEvent);
-        if (document.body) {
-          document.body.dispatchEvent(wheelEvent);
-        }
-        if (document.documentElement) {
-          document.documentElement.dispatchEvent(wheelEvent);
-        }
-        
-        // Method 2: Try keyboard events with proper initialization
-        const keyDownEvent = new KeyboardEvent('keydown', {
-          key: 'ArrowDown',
-          code: 'ArrowDown',
-          keyCode: 40,
-          which: 40,
-          bubbles: true,
-          cancelable: false,
-          view: window,
-          charCode: 0
-        });
-        
-        const keyPressEvent = new KeyboardEvent('keypress', {
-          key: 'ArrowDown',
-          code: 'ArrowDown',
-          keyCode: 40,
-          which: 40,
-          bubbles: true,
-          cancelable: false,
-          view: window,
-          charCode: 0
-        });
-        
-        // Focus and dispatch to embed first
-        if (pdfEmbed) {
-          try {
-            pdfEmbed.focus();
-            pdfEmbed.dispatchEvent(keyDownEvent);
-            pdfEmbed.dispatchEvent(keyPressEvent);
-          } catch (e) {
-            // Cross-origin or other issue
-          }
-        }
-        
-        // Also dispatch to window/document
-        window.dispatchEvent(keyDownEvent);
-        document.dispatchEvent(keyDownEvent);
-        if (document.body) {
-          document.body.dispatchEvent(keyDownEvent);
-        }
-        
-        // Method 3: Try scrolling the window directly
-        if (window.scrollBy) {
-          window.scrollBy(0, scrollAmount);
-        }
-        
-        // Method 4: Try scrolling document elements
-        if (document.documentElement && document.documentElement.scrollTop !== undefined) {
-          const currentScroll = document.documentElement.scrollTop;
-          document.documentElement.scrollTop = currentScroll + scrollAmount;
-        }
-        if (document.body && document.body.scrollTop !== undefined) {
-          const currentScroll = document.body.scrollTop;
-          document.body.scrollTop = currentScroll + scrollAmount;
-        }
-        
-        // Method 5: Try using window.scrollY
-        if (window.scrollY !== undefined) {
-          window.scrollTo({
-            top: window.scrollY + scrollAmount,
-            left: 0,
-            behavior: 'auto'
-          });
-        }
-        
-        // Method 6: Try to find and scroll the actual scrollable container
-        // Chrome's PDF viewer might have a scrollable container we can access
-        const possibleContainers = [
-          document.querySelector('#plugin'),
-          document.querySelector('embed'),
-          document.querySelector('body'),
-          document.querySelector('html'),
-          document.documentElement,
-          document.body
-        ];
-        
-        for (const container of possibleContainers) {
-          if (container) {
-            try {
-              // Try multiple scroll methods on each container
-              if (container.scrollTop !== undefined) {
-                container.scrollTop += scrollAmount;
-              }
-              if (container.scrollBy) {
-                container.scrollBy(0, scrollAmount);
-              }
-              if (container.scroll) {
-                container.scroll(0, (container.scrollTop || 0) + scrollAmount);
-              }
-            } catch (e) {
-              // Some containers might not be scrollable or accessible
-            }
-          }
-        }
-        
-        // Method 7: Try to access the embed's contentDocument if accessible
-        if (pdfEmbed && pdfEmbed.contentDocument) {
-          try {
-            const embedDoc = pdfEmbed.contentDocument;
-            if (embedDoc.body) {
-              embedDoc.body.scrollTop += scrollAmount;
-            }
-            if (embedDoc.documentElement) {
-              embedDoc.documentElement.scrollTop += scrollAmount;
-            }
-          } catch (e) {
-            // Cross-origin restriction - expected for PDFs
-          }
-        }
-        
-        // Method 8: Try PDF.js viewer if present
-        if (window.PDFViewerApplication) {
-          try {
-            const viewer = document.querySelector('#viewerContainer') || 
-                          document.querySelector('.pdfViewer') ||
-                          document.querySelector('#viewer');
-            if (viewer && viewer.scrollTop !== undefined) {
-              viewer.scrollTop += scrollAmount;
-            }
-          } catch (e) {
-            // PDF.js access might fail
-          }
-        }
-        
-        // Method 9: Try using Chrome's PDF viewer page navigation as last resort
-        // This is a workaround - navigate pages if we can't scroll
-        // Only use this if other methods consistently fail
-        try {
-          // Check if we can access the PDF viewer's internal state
-          if (window.chrome && window.chrome.pdfViewer) {
-            // Chrome's internal API - might not be accessible
-          }
-        } catch (e) {
-          // Expected to fail
-        }
-      } catch (e) {
-        console.debug('AutoScroller PDF scroll error:', e);
-      }
-    }, pdfInterval);
-  } else {
-    // Regular page scrolling
-    interval = setInterval(() => {
-      try {
-        // Method 1: window.scrollBy (most common)
-        if (typeof window !== 'undefined' && window.scrollBy) {
-          window.scrollBy(0, scrollAmount);
-        }
-        // Method 2: document.documentElement.scrollTop
-        else if (document.documentElement) {
-          document.documentElement.scrollTop += scrollAmount;
-        }
-        // Method 3: document.body.scrollTop
-        else if (document.body) {
-          document.body.scrollTop += scrollAmount;
-        }
-        // Method 4: window.scrollY
-        else if (typeof window !== 'undefined' && window.scrollY !== undefined) {
-          window.scrollTo(0, window.scrollY + scrollAmount);
-        }
-      } catch (e) {
-        console.debug('AutoScroller scroll error:', e);
-      }
-    }, 50);
-  }
-  
-  updateButtonState();
+function saveSettings(nextSettings) {
+  chrome.storage.sync.set(nextSettings);
 }
 
-function stopScroll() {
-  scrolling = false;
-  clearInterval(interval);
-  updateButtonState();
+function isDocumentTarget(element) {
+  return (
+    element === document.scrollingElement ||
+    element === document.documentElement ||
+    element === document.body
+  );
+}
+
+function isPdfContext() {
+  const href = window.location.href.toLowerCase();
+  return (
+    href.endsWith(".pdf") ||
+    document.contentType === "application/pdf" ||
+    Boolean(
+      document.querySelector("#viewerContainer") ||
+        document.querySelector(".pdfViewer") ||
+        document.querySelector('embed[type="application/pdf"]') ||
+        document.querySelector('embed[type="application/x-google-chrome-pdf"]')
+    )
+  );
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }

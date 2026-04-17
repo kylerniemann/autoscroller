@@ -2,12 +2,24 @@
 {
   "manifest_version": 3,
   "name": "AutoScroller",
-  "version": "1.0",
-  "description": "Auto-scroll pages with adjustable speed, pause, and auto-start.",
+  "version": "1.1.0",
+  "description": "Smooth auto-scrolling with an in-page dock, speed tuning, keyboard shortcuts, and optional voice control.",
   "permissions": ["storage", "activeTab"],
+  "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "AutoScroller"
+    "default_title": "AutoScroller",
+    "default_icon": {
+      "16": "icon.png",
+      "32": "icon.png",
+      "48": "icon.png",
+      "128": "icon.png"
+    }
   },
   "content_scripts": [
     {

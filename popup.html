@@ -1,249 +1,497 @@
 
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoScroller</title>
   <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f3f6fb;
+      --panel: rgba(255, 255, 255, 0.92);
+      --panel-border: rgba(148, 163, 184, 0.28);
+      --panel-strong: rgba(255, 255, 255, 0.98);
+      --text: #0f172a;
+      --muted: #64748b;
+      --line: rgba(148, 163, 184, 0.22);
+      --primary: #2563eb;
+      --primary-strong: #1d4ed8;
+      --success-bg: #dcfce7;
+      --success-text: #166534;
+      --neutral-bg: #e2e8f0;
+      --neutral-text: #334155;
+      --warn-bg: #fef3c7;
+      --warn-text: #92400e;
+      --shadow: 0 24px 60px rgba(15, 23, 42, 0.16);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #020617;
+        --panel: rgba(15, 23, 42, 0.94);
+        --panel-border: rgba(71, 85, 105, 0.7);
+        --panel-strong: rgba(15, 23, 42, 0.98);
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --line: rgba(71, 85, 105, 0.45);
+        --primary: #60a5fa;
+        --primary-strong: #3b82f6;
+        --success-bg: rgba(22, 101, 52, 0.28);
+        --success-text: #bbf7d0;
+        --neutral-bg: rgba(51, 65, 85, 0.9);
+        --neutral-text: #e2e8f0;
+        --warn-bg: rgba(180, 83, 9, 0.3);
+        --warn-text: #fde68a;
+        --shadow: 0 24px 60px rgba(2, 6, 23, 0.42);
+      }
+    }
+
     * {
       box-sizing: border-box;
     }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      width: 200px;
-      padding: 0;
+      width: 360px;
       margin: 0;
-      background: #fff;
-      color: #333;
+      background:
+        radial-gradient(circle at top right, rgba(37, 99, 235, 0.16), transparent 42%),
+        linear-gradient(180deg, rgba(15, 23, 42, 0.04), transparent 28%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
     }
-    @media (prefers-color-scheme: dark) {
-      body {
-        background: #1e1e1e;
-        color: #e0e0e0;
-      }
+
+    .popup {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
     }
-    .header {
-      padding: 10px 12px;
-      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+
+    .hero,
+    .panel,
+    .hint-panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
     }
-    @media (prefers-color-scheme: dark) {
-      .header {
-        border-bottom-color: rgba(255, 255, 255, 0.1);
-      }
+
+    .hero {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
     }
-    h3 {
-      margin: 0;
-      color: #333;
+
+    .brand-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, var(--primary-strong), var(--primary));
+      color: #ffffff;
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.22);
+      flex-shrink: 0;
     }
-    @media (prefers-color-scheme: dark) {
-      h3 {
-        color: #e0e0e0;
-      }
-    }
-    .content {
-      padding: 10px 12px;
-    }
-    button {
-      width: 100%;
-      padding: 8px;
-      background: #4285f4;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 500;
-      transition: all 0.2s;
-      margin-bottom: 10px;
-    }
-    button:hover {
-      background: #3367d6;
-    }
-    button:active {
-      transform: scale(0.98);
-    }
-    @media (prefers-color-scheme: dark) {
-      button {
-        background: #4285f4;
-      }
-      button:hover {
-        background: #3367d6;
-      }
-    }
-    .control-group {
-      background: rgba(0, 0, 0, 0.02);
-      border: 1px solid rgba(0, 0, 0, 0.08);
-      border-radius: 6px;
-      padding: 8px 10px;
-      margin-bottom: 8px;
-    }
-    @media (prefers-color-scheme: dark) {
-      .control-group {
-        background: rgba(255, 255, 255, 0.05);
-        border-color: rgba(255, 255, 255, 0.1);
-      }
-    }
-    label {
-      display: block;
-      margin: 0 0 6px 0;
-      font-size: 10px;
-      color: #666;
-      font-weight: 600;
+
+    .eyebrow {
+      margin: 0 0 4px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      color: var(--muted);
     }
-    @media (prefers-color-scheme: dark) {
-      label {
-        color: #aaa;
-      }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.1;
     }
-    #speedSlider {
-      width: 100%;
-      height: 4px;
-      border-radius: 2px;
-      background: rgba(0, 0, 0, 0.1);
-      outline: none;
-      -webkit-appearance: none;
-      appearance: none;
-      margin: 6px 0;
+
+    .hero-copy {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--muted);
     }
-    @media (prefers-color-scheme: dark) {
-      #speedSlider {
-        background: rgba(255, 255, 255, 0.15);
-      }
+
+    .status-badge {
+      margin-left: auto;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
     }
-    #speedSlider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #4285f4;
+
+    .status-badge.ready {
+      background: var(--neutral-bg);
+      color: var(--neutral-text);
+    }
+
+    .status-badge.live {
+      background: var(--success-bg);
+      color: var(--success-text);
+    }
+
+    .status-badge.unsupported {
+      background: var(--warn-bg);
+      color: var(--warn-text);
+    }
+
+    .panel {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .primary-action,
+    .toggle-card,
+    .preset-button {
+      border: 0;
       cursor: pointer;
-      transition: all 0.2s;
+      transition:
+        transform 140ms ease,
+        background-color 140ms ease,
+        box-shadow 140ms ease,
+        border-color 140ms ease,
+        color 140ms ease;
     }
-    #speedSlider::-webkit-slider-thumb:hover {
-      background: #3367d6;
-      transform: scale(1.15);
+
+    .primary-action:focus-visible,
+    .toggle-card:focus-visible,
+    .preset-button:focus-visible,
+    #speedSlider:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
     }
-    #speedSlider::-moz-range-thumb {
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #4285f4;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s;
+
+    .primary-action {
+      min-height: 50px;
+      padding: 0 16px;
+      border-radius: 15px;
+      background: linear-gradient(135deg, var(--primary-strong), var(--primary));
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 800;
+      box-shadow: 0 14px 30px rgba(37, 99, 235, 0.22);
     }
-    #speedSlider::-moz-range-thumb:hover {
-      background: #3367d6;
-      transform: scale(1.15);
+
+    .primary-action:hover:not(:disabled) {
+      transform: translateY(-1px);
     }
-    .speed-value {
-      text-align: center;
-      font-size: 20px;
-      font-weight: 600;
-      color: #4285f4;
-      margin: 4px 0 0 0;
-      line-height: 1;
+
+    .primary-action.is-active {
+      background: linear-gradient(135deg, #b45309, #d97706);
+      box-shadow: 0 14px 30px rgba(217, 119, 6, 0.22);
     }
-    @media (prefers-color-scheme: dark) {
-      .speed-value {
-        color: #5a9eff;
-      }
+
+    .primary-action:disabled {
+      cursor: not-allowed;
+      opacity: 0.62;
+      box-shadow: none;
     }
-    .auto-start-toggle {
+
+    .section-card {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      display: grid;
+      gap: 12px;
+    }
+
+    .section-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      cursor: pointer;
-      user-select: none;
-      padding: 0;
+      gap: 10px;
     }
-    .auto-start-toggle:hover {
-      opacity: 0.85;
-    }
-    .auto-start-label {
+
+    .section-label {
       margin: 0;
-      text-transform: none;
-      letter-spacing: normal;
-      font-size: 12px;
-      color: #333;
-      flex: 1;
+      font-size: 13px;
+      font-weight: 700;
     }
-    @media (prefers-color-scheme: dark) {
-      .auto-start-label {
-        color: #e0e0e0;
-      }
+
+    .speed-value {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--primary);
     }
-    .toggle-switch {
-      width: 36px;
-      height: 20px;
-      background: rgba(0, 0, 0, 0.2);
-      border-radius: 10px;
-      position: relative;
-      transition: background 0.2s;
-      flex-shrink: 0;
-      margin-left: 8px;
+
+    #speedSlider {
+      width: 100%;
+      height: 6px;
+      margin: 0;
+      border-radius: 999px;
+      appearance: none;
+      background: linear-gradient(90deg, rgba(37, 99, 235, 0.18), rgba(37, 99, 235, 0.56));
     }
-    @media (prefers-color-scheme: dark) {
-      .toggle-switch {
-        background: rgba(255, 255, 255, 0.2);
-      }
-    }
-    .toggle-switch.enabled {
-      background: #34a853;
-    }
-    .toggle-switch::after {
-      content: '';
-      position: absolute;
-      width: 14px;
-      height: 14px;
+
+    #speedSlider::-webkit-slider-thumb {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #ffffff;
       border-radius: 50%;
-      background: white;
+      appearance: none;
+      background: var(--primary);
+      box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
+    }
+
+    #speedSlider::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      background: var(--primary);
+      box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
+    }
+
+    .preset-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .preset-button {
+      min-height: 34px;
+      border-radius: 12px;
+      background: rgba(226, 232, 240, 0.88);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .preset-button {
+        background: rgba(51, 65, 85, 0.92);
+      }
+    }
+
+    .preset-button.active {
+      background: rgba(37, 99, 235, 0.16);
+      color: var(--primary);
+      box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.28);
+    }
+
+    .option-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .toggle-card {
+      min-height: 92px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      color: var(--text);
+      text-align: left;
+      display: grid;
+      gap: 6px;
+    }
+
+    .toggle-card:hover {
+      transform: translateY(-1px);
+      border-color: rgba(96, 165, 250, 0.45);
+    }
+
+    .toggle-card.is-on {
+      background: rgba(37, 99, 235, 0.08);
+      box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18);
+    }
+
+    .toggle-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .toggle-title {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .toggle-desc {
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .toggle-switch {
+      width: 40px;
+      height: 22px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.6);
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .toggle-switch::after {
+      content: "";
+      position: absolute;
       top: 3px;
       left: 3px;
-      transition: transform 0.2s;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #ffffff;
+      transition: transform 140ms ease;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
     }
+
+    .toggle-switch.enabled {
+      background: #16a34a;
+    }
+
     .toggle-switch.enabled::after {
-      transform: translateX(16px);
+      transform: translateX(18px);
     }
-    #autoStart, #voiceEnabled {
-      display: none;
+
+    .hint-panel {
+      padding: 14px 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .hint-title {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .shortcut-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 8px;
+    }
+
+    .shortcut-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    kbd {
+      min-width: 24px;
+      padding: 4px 7px;
+      border-radius: 8px;
+      background: rgba(226, 232, 240, 0.88);
+      border: 1px solid var(--line);
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      text-align: center;
+      color: var(--text);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      kbd {
+        background: rgba(51, 65, 85, 0.92);
+      }
     }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h3>AutoScroller</h3>
-  </div>
-  <div class="content">
-    <button id="toggleScroll">▶ Start</button>
-    
-    <div class="control-group">
-      <label>Speed</label>
-      <input type="range" id="speedSlider" min="1" max="20" value="5">
-      <div class="speed-value" id="speedValue">5</div>
-    </div>
-    
-    <div class="control-group">
-      <div class="auto-start-toggle" id="autoStartToggle">
-        <span class="auto-start-label">Auto-start</span>
-        <div class="toggle-switch" id="toggleSwitch"></div>
+  <main class="popup">
+    <section class="hero">
+      <div class="brand-row">
+        <div class="brand-mark">AS</div>
+        <div>
+          <p class="eyebrow">Chrome Extension</p>
+          <h1>AutoScroller</h1>
+        </div>
+        <span id="tabStatus" class="status-badge ready">Checking</span>
       </div>
-      <input type="checkbox" id="autoStart">
-    </div>
-    
-    <div class="control-group" style="margin-bottom: 0;">
-      <div class="auto-start-toggle" id="voiceToggle">
-        <span class="auto-start-label">Voice Control</span>
-        <div class="toggle-switch" id="voiceSwitch"></div>
+      <p id="statusCopy" class="hero-copy">
+        Connecting to the active tab.
+      </p>
+    </section>
+
+    <section class="panel">
+      <button id="toggleScroll" class="primary-action" type="button">
+        Start scrolling
+      </button>
+
+      <div class="section-card">
+        <div class="section-header">
+          <p class="section-label">Speed</p>
+          <p id="speedValue" class="speed-value">6/20</p>
+        </div>
+        <input type="range" id="speedSlider" min="1" max="20" value="6">
+        <div class="preset-row">
+          <button class="preset-button" type="button" data-speed="3">3</button>
+          <button class="preset-button" type="button" data-speed="6">6</button>
+          <button class="preset-button" type="button" data-speed="10">10</button>
+          <button class="preset-button" type="button" data-speed="14">14</button>
+        </div>
       </div>
-      <input type="checkbox" id="voiceEnabled">
-    </div>
-  </div>
+
+      <div class="option-grid">
+        <button id="autoStartToggle" class="toggle-card" type="button" aria-pressed="false">
+          <div class="toggle-top">
+            <span class="toggle-title">Auto-start</span>
+            <span id="autoStartSwitch" class="toggle-switch"></span>
+          </div>
+          <p class="toggle-desc">Begin when a supported page loads.</p>
+        </button>
+
+        <button id="voiceToggle" class="toggle-card" type="button" aria-pressed="false">
+          <div class="toggle-top">
+            <span class="toggle-title">Voice control</span>
+            <span id="voiceSwitch" class="toggle-switch"></span>
+          </div>
+          <p id="voiceCopy" class="toggle-desc">Say start, pause, faster, or slower.</p>
+        </button>
+      </div>
+    </section>
+
+    <section class="hint-panel">
+      <p class="hint-title">Shortcuts In Page</p>
+      <ul class="shortcut-list">
+        <li>
+          <span><kbd>Alt</kbd> <kbd>S</kbd></span>
+          <span>Start or pause scrolling</span>
+        </li>
+        <li>
+          <span><kbd>Alt</kbd> <kbd>[</kbd></span>
+          <span>Decrease speed</span>
+        </li>
+        <li>
+          <span><kbd>Alt</kbd> <kbd>]</kbd></span>
+          <span>Increase speed</span>
+        </li>
+      </ul>
+    </section>
+  </main>
   <script src="popup.js"></script>
 </body>
 </html>
