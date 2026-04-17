@@ -1,0 +1,249 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      width: 200px;
+      padding: 0;
+      margin: 0;
+      background: #fff;
+      color: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #1e1e1e;
+        color: #e0e0e0;
+      }
+    }
+    .header {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+    @media (prefers-color-scheme: dark) {
+      .header {
+        border-bottom-color: rgba(255, 255, 255, 0.1);
+      }
+    }
+    h3 {
+      margin: 0;
+      color: #333;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    @media (prefers-color-scheme: dark) {
+      h3 {
+        color: #e0e0e0;
+      }
+    }
+    .content {
+      padding: 10px 12px;
+    }
+    button {
+      width: 100%;
+      padding: 8px;
+      background: #4285f4;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.2s;
+      margin-bottom: 10px;
+    }
+    button:hover {
+      background: #3367d6;
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    @media (prefers-color-scheme: dark) {
+      button {
+        background: #4285f4;
+      }
+      button:hover {
+        background: #3367d6;
+      }
+    }
+    .control-group {
+      background: rgba(0, 0, 0, 0.02);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+    }
+    @media (prefers-color-scheme: dark) {
+      .control-group {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.1);
+      }
+    }
+    label {
+      display: block;
+      margin: 0 0 6px 0;
+      font-size: 10px;
+      color: #666;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    @media (prefers-color-scheme: dark) {
+      label {
+        color: #aaa;
+      }
+    }
+    #speedSlider {
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(0, 0, 0, 0.1);
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+      margin: 6px 0;
+    }
+    @media (prefers-color-scheme: dark) {
+      #speedSlider {
+        background: rgba(255, 255, 255, 0.15);
+      }
+    }
+    #speedSlider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #4285f4;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #speedSlider::-webkit-slider-thumb:hover {
+      background: #3367d6;
+      transform: scale(1.15);
+    }
+    #speedSlider::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #4285f4;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+    }
+    #speedSlider::-moz-range-thumb:hover {
+      background: #3367d6;
+      transform: scale(1.15);
+    }
+    .speed-value {
+      text-align: center;
+      font-size: 20px;
+      font-weight: 600;
+      color: #4285f4;
+      margin: 4px 0 0 0;
+      line-height: 1;
+    }
+    @media (prefers-color-scheme: dark) {
+      .speed-value {
+        color: #5a9eff;
+      }
+    }
+    .auto-start-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      padding: 0;
+    }
+    .auto-start-toggle:hover {
+      opacity: 0.85;
+    }
+    .auto-start-label {
+      margin: 0;
+      text-transform: none;
+      letter-spacing: normal;
+      font-size: 12px;
+      color: #333;
+      flex: 1;
+    }
+    @media (prefers-color-scheme: dark) {
+      .auto-start-label {
+        color: #e0e0e0;
+      }
+    }
+    .toggle-switch {
+      width: 36px;
+      height: 20px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 10px;
+      position: relative;
+      transition: background 0.2s;
+      flex-shrink: 0;
+      margin-left: 8px;
+    }
+    @media (prefers-color-scheme: dark) {
+      .toggle-switch {
+        background: rgba(255, 255, 255, 0.2);
+      }
+    }
+    .toggle-switch.enabled {
+      background: #34a853;
+    }
+    .toggle-switch::after {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: white;
+      top: 3px;
+      left: 3px;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+    .toggle-switch.enabled::after {
+      transform: translateX(16px);
+    }
+    #autoStart, #voiceEnabled {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h3>AutoScroller</h3>
+  </div>
+  <div class="content">
+    <button id="toggleScroll">▶ Start</button>
+    
+    <div class="control-group">
+      <label>Speed</label>
+      <input type="range" id="speedSlider" min="1" max="20" value="5">
+      <div class="speed-value" id="speedValue">5</div>
+    </div>
+    
+    <div class="control-group">
+      <div class="auto-start-toggle" id="autoStartToggle">
+        <span class="auto-start-label">Auto-start</span>
+        <div class="toggle-switch" id="toggleSwitch"></div>
+      </div>
+      <input type="checkbox" id="autoStart">
+    </div>
+    
+    <div class="control-group" style="margin-bottom: 0;">
+      <div class="auto-start-toggle" id="voiceToggle">
+        <span class="auto-start-label">Voice Control</span>
+        <div class="toggle-switch" id="voiceSwitch"></div>
+      </div>
+      <input type="checkbox" id="voiceEnabled">
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
